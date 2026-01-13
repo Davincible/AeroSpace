@@ -22,7 +22,7 @@ public struct LayoutCmdArgs: CmdArgs {
         case accordion, tiles
         case horizontal, vertical
         case h_accordion, v_accordion, h_tiles, v_tiles
-        case tiling, floating
+        case tiling, floating, sticky
     }
 }
 

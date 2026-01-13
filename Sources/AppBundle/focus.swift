@@ -146,11 +146,23 @@ extension Workspace {
     if hasFocusChanged {
         onFocusChanged(focus)
     }
-    if let _prevFocusedWorkspaceName, hasFocusedWorkspaceChanged {
-        onWorkspaceChanged(_prevFocusedWorkspaceName, frozenFocus.workspaceName)
+    if hasFocusedWorkspaceChanged {
+        moveStickyWindowsToFocusedWorkspace(focus)
+        if let _prevFocusedWorkspaceName {
+            onWorkspaceChanged(_prevFocusedWorkspaceName, frozenFocus.workspaceName)
+        }
     }
     if hasFocusedMonitorChanged {
         onFocusedMonitorChanged(focus)
+    }
+}
+
+@MainActor private func moveStickyWindowsToFocusedWorkspace(_ newFocus: LiveFocus) {
+    let targetWorkspace = newFocus.workspace
+    for workspace in Workspace.all where workspace != targetWorkspace {
+        for window in workspace.floatingWindows where window.isSticky {
+            window.bindAsFloatingWindow(to: targetWorkspace)
+        }
     }
 }
 

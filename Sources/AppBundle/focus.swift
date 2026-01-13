@@ -76,6 +76,10 @@ struct FrozenFocus: AeroAny, Equatable, Sendable {
 }
 extension Window {
     @MainActor func focusWindow() -> Bool {
+        // For sticky windows, move to current workspace first instead of switching workspaces
+        if isSticky, let currentWorkspace = focus.workspace as Workspace?, nodeWorkspace != currentWorkspace {
+            bindAsFloatingWindow(to: currentWorkspace)
+        }
         if let focus = toLiveFocusOrNil() {
             return setFocus(to: focus)
         } else {

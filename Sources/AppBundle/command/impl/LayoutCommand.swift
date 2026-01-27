@@ -68,7 +68,7 @@ struct LayoutCommand: Command {
                         return true
                     case .workspace:
                         // Already floating, toggle sticky
-                        window.isSticky = !window.isSticky
+                        window.isSticky.toggle()
                         return true
                 }
         }

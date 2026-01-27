@@ -3,13 +3,21 @@ import Common
 
 enum GlobalObserver {
     private static func onNotif(_ notification: Notification) {
+        let bundleId = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+
         // Third line of defence against lock screen window. See: closedWindowsCache
         // Second and third lines of defence are technically needed only to avoid potential flickering
-        if (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == lockScreenAppBundleId {
+        if bundleId == lockScreenAppBundleId {
             return
         }
+
         let notifName = notification.name.rawValue
         Task { @MainActor in
+            // Filter focus events from apps in ignore-focus-from config
+            if let bundleId, config.ignoreFocusFrom.contains(bundleId) {
+                return
+            }
+
             if !TrayMenuModel.shared.isEnabled { return }
             if notifName == NSWorkspace.didActivateApplicationNotification.rawValue {
                 scheduleRefreshSession(.globalObserver(notifName), optimisticallyPreLayoutWorkspaces: true)

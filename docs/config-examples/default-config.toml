@@ -45,6 +45,10 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
 # Also see: https://nikitabobko.github.io/AeroSpace/goodies#disable-hide-app
 automatically-unhide-macos-hidden-apps = false
 
+# Ignore focus events from specified apps (prevents focus-stealing).
+# Use 'aerospace list-apps' to find app bundle IDs.
+# ignore-focus-from = ['com.logi.pluginservice']
+
 # List of workspaces that should stay alive even when they contain no windows,
 # even when they are invisible.
 # This config version is only available since 'config-version = 2'

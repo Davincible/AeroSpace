@@ -4,7 +4,7 @@ private let workspace = "<workspace>"
 private let workspaces = "\(workspace)..."
 
 public struct PrintTreeCmdArgs: CmdArgs {
-    public let rawArgsForStrRepr: EquatableNoop<StrArrSlice>
+    /*conforms*/ public var commonState: CmdArgsCommonState
     public static let parser: CmdParser<Self> = cmdParser(
         kind: .printTree,
         allowInConfig: false,
@@ -39,9 +39,6 @@ public struct PrintTreeCmdArgs: CmdArgs {
 
     public var filteringOptions = FilteringOptions()
 
-    /*conforms*/ public var windowId: UInt32?
-    /*conforms*/ public var workspaceName: WorkspaceName?
-
     public struct FilteringOptions: ConvenienceCopyable, Equatable, Sendable {
         public var monitors: [MonitorId] = []
         public var focused: Bool = false
@@ -50,7 +47,7 @@ public struct PrintTreeCmdArgs: CmdArgs {
 }
 
 public func parsePrintTreeCmdArgs(_ args: StrArrSlice) -> ParsedCmd<PrintTreeCmdArgs> {
-    parseSpecificCmdArgs(PrintTreeCmdArgs(rawArgsForStrRepr: .init(args)), args)
+    parseSpecificCmdArgs(PrintTreeCmdArgs(commonState: .init(args)), args)
         .filter("--focused conflicts with other filtering options") { raw in
             raw.filteringOptions.focused.implies(
                 raw.filteringOptions.workspaces.isEmpty && raw.filteringOptions.monitors.isEmpty

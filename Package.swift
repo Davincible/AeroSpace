@@ -52,6 +52,9 @@ let package = Package(
             swiftSettings: [
                 .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
             ],
+            linkerSettings: [
+                .unsafeFlags(["-F/System/Library/PrivateFrameworks", "-framework", "SkyLight"]),
+            ]
         ),
         .executableTarget(
             name: "AeroSpaceApp",

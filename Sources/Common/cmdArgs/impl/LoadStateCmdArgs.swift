@@ -1,6 +1,6 @@
 public struct LoadStateCmdArgs: CmdArgs {
-    public let rawArgsForStrRepr: EquatableNoop<StrArrSlice>
-    public init(rawArgs: StrArrSlice) { self.rawArgsForStrRepr = .init(rawArgs) }
+    /*conforms*/ public var commonState: CmdArgsCommonState
+    public init(rawArgs: StrArrSlice) { self.commonState = .init(rawArgs) }
     public static let parser: CmdParser<Self> = cmdParser(
         kind: .loadState,
         allowInConfig: true,
@@ -13,8 +13,6 @@ public struct LoadStateCmdArgs: CmdArgs {
 
     public var filePath: String? = nil
     public var verbose: Bool = false
-    /*conforms*/ public var windowId: UInt32?
-    /*conforms*/ public var workspaceName: WorkspaceName?
 }
 
 private func parseOptionalLoadFilePath(i: ArgParserInput) -> ParsedCliArgs<String?> {

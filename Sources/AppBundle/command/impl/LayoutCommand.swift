@@ -55,7 +55,10 @@ struct LayoutCommand: Command {
         case .tilingContainer(let parent):
             let targetOrientation = targetOrientation ?? parent.orientation
             let targetLayout = targetLayout ?? parent.layout
-            parent.layout = targetLayout
+            if parent.layout != targetLayout {
+                parent.layout = targetLayout
+                markLayoutMutation()
+            }
             parent.changeOrientation(targetOrientation)
             return true
         case .workspace, .macosMinimizedWindowsContainer, .macosFullscreenWindowsContainer,

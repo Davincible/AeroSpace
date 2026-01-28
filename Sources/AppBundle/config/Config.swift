@@ -51,6 +51,9 @@ struct Config: ConvenienceCopyable {
     var keyMapping = KeyMapping()
     var execConfig: ExecConfig = ExecConfig()
     var stateFilePath: String? = nil
+    
+    // Performance options
+    var useFastFocus: Bool = true // Use SkyLight private API for faster focus (requires SIP disabled)
 
     var onFocusChanged: [any Command] = []
     // var onFocusedWorkspaceChanged: [any Command] = []

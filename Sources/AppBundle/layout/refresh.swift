@@ -7,12 +7,17 @@ private var activeRefreshTask: Task<(), any Error>? = nil
 @MainActor
 func scheduleRefreshSession(
     _ event: RefreshSessionEvent,
+    layoutWorkspaces shouldLayoutWorkspaces: Bool = true,
     optimisticallyPreLayoutWorkspaces: Bool = false,
 ) {
     activeRefreshTask?.cancel()
     activeRefreshTask = Task { @MainActor in
         try checkCancellation()
-        try await runRefreshSessionBlocking(event, optimisticallyPreLayoutWorkspaces: optimisticallyPreLayoutWorkspaces)
+        try await runRefreshSessionBlocking(
+            event,
+            layoutWorkspaces: shouldLayoutWorkspaces,
+            optimisticallyPreLayoutWorkspaces: optimisticallyPreLayoutWorkspaces
+        )
     }
 }
 
@@ -57,24 +62,38 @@ func runLightSession<T>(
     activeRefreshTask = nil
     return try await $refreshSessionEvent.withValue(event) {
         try await $_isStartup.withValue(event.isStartup) {
-            let nativeFocused = try await getNativeFocusedWindow()
+            let nativeFocused = try await PerfLog.measureAsync("SESSION", "getNativeFocusedWindow") {
+                try await getNativeFocusedWindow()
+            }
             if let nativeFocused { try await debugWindowsIfRecording(nativeFocused) }
             updateFocusCache(nativeFocused)
             let focusBefore = focus.windowOrNil
+            let layoutMutationBefore = currentLayoutMutationCounter()
 
-            refreshModel()
+            PerfLog.measure("SESSION", "refreshModel1") { refreshModel() }
             let result = try await body()
-            refreshModel()
+            PerfLog.measure("SESSION", "refreshModel2") { refreshModel() }
 
             let focusAfter = focus.windowOrNil
 
+            let shouldLayoutWorkspaces = currentLayoutMutationCounter() != layoutMutationBefore ||
+                focusBefore?.visualWorkspace != focusAfter?.visualWorkspace
+
             updateTrayText()
             SecureInputPanel.shared.refresh()
-            try await layoutWorkspaces()
+
+            // Optimization: call nativeFocus BEFORE layoutWorkspaces for faster perceived response
             if focusBefore != focusAfter {
-                focusAfter?.nativeFocus() // syncFocusToMacOs
+                focusAfter?.nativeFocus() // syncFocusToMacOs - do this first for faster response
             }
-            scheduleRefreshSession(event)
+
+            if shouldLayoutWorkspaces {
+                try await PerfLog.measureAsync("SESSION", "layoutWorkspaces") {
+                    try await layoutWorkspaces()
+                }
+            }
+
+            scheduleRefreshSession(event, layoutWorkspaces: shouldLayoutWorkspaces)
             return result
         }
     }
@@ -132,6 +151,13 @@ func refreshObs(_ obs: AXObserver, ax: AXUIElement, notif: CFString, data: Unsaf
     let notif = notif as String
     Task { @MainActor in
         if !TrayMenuModel.shared.isEnabled { return }
+        // Invalidate fast focus cache when we receive external focus change notification
+        if notif == kAXFocusedWindowChangedNotification as String ||
+           notif == kAXApplicationDeactivatedNotification as String ||
+           notif == kAXUIElementDestroyedNotification as String
+        {
+            invalidateFastFocusCache()
+        }
         scheduleRefreshSession(.ax(notif))
     }
 }
@@ -142,7 +168,13 @@ enum OptimalHideCorner {
 
 @MainActor
 private func layoutWorkspaces() async throws {
+    // Use SkyLight to disable display updates during layout for smoother visuals
+    let useFastLayout = config.useFastFocus && SkyLight.isAvailable
+
     if !TrayMenuModel.shared.isEnabled {
+        if useFastLayout { _ = SkyLight.disableUpdate() }
+        defer { if useFastLayout { _ = SkyLight.reenableUpdate() } }
+
         for workspace in Workspace.all {
             workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
             try await workspace.layoutWorkspace() // Unhide tiling windows from corner
@@ -174,6 +206,10 @@ private func layoutWorkspaces() async throws {
             : .bottomRightCorner
         monitorToOptimalHideCorner[monitor.rect.topLeftCorner] = corner
     }
+
+    // Disable display updates during layout operations for smoother visuals
+    if useFastLayout { _ = SkyLight.disableUpdate() }
+    defer { if useFastLayout { _ = SkyLight.reenableUpdate() } }
 
     // to reduce flicker, first unhide visible workspaces, then hide invisible ones
     for monitor in monitors {

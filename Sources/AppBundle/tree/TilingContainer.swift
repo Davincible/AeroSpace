@@ -35,6 +35,7 @@ extension TilingContainer {
         // Just change this container's orientation
         // Normalization will handle merging if it matches parent's orientation
         _orientation = targetOrientation
+        markLayoutMutation()
     }
 
     @MainActor

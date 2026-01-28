@@ -33,6 +33,8 @@ import Foundation
         try await runRefreshSessionBlocking(.startup, layoutWorkspaces: false)
         try await runLightSession(.startup, .forceRun) {
             smartLayoutAtStartup()
+            // Auto-load state before running after-startup-command
+            await autoLoadStateIfConfigured()
             _ = try await config.afterStartupCommand.runCmdSeq(.defaultEnv, .emptyStdin)
         }
     }

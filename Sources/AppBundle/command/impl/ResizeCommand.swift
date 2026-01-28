@@ -9,7 +9,19 @@ struct ResizeCommand: Command { // todo cover with tests
         guard let target = args.resolveTargetOrReportError(env, io) else { return false }
 
         if let window = target.windowOrNil, window.isFloating {
-            guard let size = try await window.getAxSize(), let topLeftCorner = try await window.getAxTopLeftCorner() else { return false }
+            let size: CGSize
+            let topLeftCorner: CGPoint
+            if let rect = window.lastAppliedLayoutPhysicalRect {
+                size = rect.size
+                topLeftCorner = rect.topLeftCorner
+            } else {
+                guard let axSize = try await window.getAxSize(),
+                      let axTopLeftCorner = try await window.getAxTopLeftCorner() else {
+                    return false
+                }
+                size = axSize
+                topLeftCorner = axTopLeftCorner
+            }
 
             let computeTopLeftCornerAndSize = { (diffSize: CGSize) -> (CGPoint, CGSize) in
                 // Calculate current center of the window

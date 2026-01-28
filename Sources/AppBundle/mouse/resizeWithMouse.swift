@@ -27,6 +27,7 @@ func resizedObs(_ obs: AXObserver, ax: AXUIElement, notif: CFString, data: Unsaf
 func resetManipulatedWithMouseIfPossible() async throws {
     if currentlyManipulatedWithMouseWindowId != nil {
         currentlyManipulatedWithMouseWindowId = nil
+        isDraggingFloatingWindow = false
         for workspace in Workspace.all {
             workspace.resetResizeWeightBeforeResizeRecursive()
         }

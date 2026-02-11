@@ -52,7 +52,8 @@ struct Config: ConvenienceCopyable {
     var keyMapping = KeyMapping()
     var execConfig: ExecConfig = ExecConfig()
     var stateFilePath: String? = nil
-    
+    var mouseResizeModifier: MouseResizeModifier = .alt
+
     // Performance options
     var useFastFocus: Bool = true // Use SkyLight private API for faster focus (requires SIP disabled)
 
@@ -66,6 +67,19 @@ struct Config: ConvenienceCopyable {
     var appModes: [String: String] = [:] // bundleId -> modeName mapping for app-specific modes
     var onWindowDetected: [WindowDetectedCallback] = []
     var onModeChanged: [any Command] = []
+}
+
+enum MouseResizeModifier: String {
+    case cmd, alt, ctrl, shift
+
+    var cgEventFlag: CGEventFlags {
+        switch self {
+            case .cmd: .maskCommand
+            case .alt: .maskAlternate
+            case .ctrl: .maskControl
+            case .shift: .maskShift
+        }
+    }
 }
 
 enum DefaultContainerOrientation: String {

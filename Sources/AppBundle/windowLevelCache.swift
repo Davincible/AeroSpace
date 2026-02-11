@@ -12,7 +12,7 @@ private var onScreenWindowIds: Set<UInt32> = []
 @MainActor
 private var tabGroupsCache: [String: TabGroup] = [:]
 
-struct TabGroup {
+private struct TabGroup {
     let pid: Int32
     let bounds: CGRect
     var activeWindowId: UInt32?
@@ -23,9 +23,7 @@ struct TabGroup {
 
 @MainActor
 func getWindowLevel(for windowId: UInt32) -> MacOsWindowLevel? {
-    if let existing = windowLevelCache[windowId] { return existing }
-    refreshWindowAndTabCaches()
-    return windowLevelCache[windowId]
+    windowLevelCache[windowId]
 }
 
 @MainActor
@@ -34,18 +32,19 @@ func isWindowOnScreen(_ windowId: UInt32) -> Bool {
 }
 
 @MainActor
+private var backgroundTabIds: Set<UInt32> = []
+
+@MainActor
+private var windowToTabGroupKey: [UInt32: String] = [:]
+
+@MainActor
 func isBackgroundTab(_ windowId: UInt32) -> Bool {
-    tabGroupsCache.values.contains { $0.backgroundWindowIds.contains(windowId) }
+    backgroundTabIds.contains(windowId)
 }
 
 @MainActor
 func tabGroupKey(for windowId: UInt32) -> String? {
-    for (key, group) in tabGroupsCache {
-        if group.activeWindowId == windowId || group.backgroundWindowIds.contains(windowId) {
-            return key
-        }
-    }
-    return nil
+    windowToTabGroupKey[windowId]
 }
 
 // MARK: - Cache Refresh
@@ -72,6 +71,8 @@ func refreshWindowAndTabCaches() {
     struct BoundsGroupEntry {
         var onScreenIds: [UInt32] = []
         var offScreenIds: [UInt32] = []
+        let pid: Int32
+        let bounds: CGRect
     }
     var boundsGroups: [String: BoundsGroupEntry] = [:]
 
@@ -110,10 +111,11 @@ func refreshWindowAndTabCaches() {
               let h = (boundsDict["Height"] as? NSNumber)?.doubleValue
         else { continue }
 
-        // Composite key: PID + exact bounds. Tabbed windows share identical frames.
-        let groupKey = "\(pid)_\(x)_\(y)_\(w)_\(h)"
+        // Composite key: PID + pixel-aligned bounds. Tabbed windows share identical frames.
+        // Round to integers to avoid non-deterministic Double string representations.
+        let groupKey = "\(pid)_\(Int(x.rounded()))_\(Int(y.rounded()))_\(Int(w.rounded()))_\(Int(h.rounded()))"
 
-        var entry = boundsGroups[groupKey] ?? BoundsGroupEntry()
+        var entry = boundsGroups[groupKey] ?? BoundsGroupEntry(pid: pid, bounds: CGRect(x: x, y: y, width: w, height: h))
         if windowIsOnScreen {
             entry.onScreenIds.append(windowId)
         } else {
@@ -122,32 +124,40 @@ func refreshWindowAndTabCaches() {
         boundsGroups[groupKey] = entry
     }
 
-    // Build tab groups: exactly 1 on-screen + 1 or more off-screen = tab group
+    // Build tab groups: exactly 1 on-screen + 1 or more off-screen = tab group.
+    //
+    // Known limitation (false positives): Two non-tabbed windows from the same app
+    // at pixel-identical coordinates where one is off-screen would be misidentified
+    // as a tab group. In practice this is extremely unlikely — AeroSpace tiles windows
+    // to non-overlapping positions, and the "exactly 1 on-screen" guard prevents most
+    // false matches. The worst case is a background tab that's actually just a hidden
+    // window, which will be harmlessly demoted and re-promoted on the next cycle.
     var newTabGroups: [String: TabGroup] = [:]
     for (key, entry) in boundsGroups {
         guard entry.onScreenIds.count == 1, !entry.offScreenIds.isEmpty else { continue }
 
-        // Extract PID and bounds from the key for the TabGroup struct
-        let parts = key.split(separator: "_")
-        guard parts.count == 5,
-              let pid = Int32(parts[0]),
-              let x = Double(parts[1]),
-              let y = Double(parts[2]),
-              let w = Double(parts[3]),
-              let h = Double(parts[4])
-        else { continue }
-
         newTabGroups[key] = TabGroup(
-            pid: pid,
-            bounds: CGRect(x: x, y: y, width: w, height: h),
+            pid: entry.pid,
+            bounds: entry.bounds,
             activeWindowId: entry.onScreenIds[0],
             backgroundWindowIds: Set(entry.offScreenIds)
         )
     }
 
+    // Build reverse lookups for O(1) tab queries
+    var newBackgroundIds: Set<UInt32> = []
+    var newWindowToGroup: [UInt32: String] = [:]
+    for (key, group) in newTabGroups {
+        newBackgroundIds.formUnion(group.backgroundWindowIds)
+        if let active = group.activeWindowId { newWindowToGroup[active] = key }
+        for bgId in group.backgroundWindowIds { newWindowToGroup[bgId] = key }
+    }
+
     windowLevelCache = newLevels
     onScreenWindowIds = newOnScreen
     tabGroupsCache = newTabGroups
+    backgroundTabIds = newBackgroundIds
+    windowToTabGroupKey = newWindowToGroup
 }
 
 enum MacOsWindowLevel: Sendable, Equatable {

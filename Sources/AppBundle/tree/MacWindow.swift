@@ -84,7 +84,9 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
-        // Clean up tab demotion/promotion tracking for this window
+        // Clean up tab demotion/promotion tracking for this window.
+        // Note: demotedTabSlots is private to normalizeLayoutReason.swift and is
+        // cleared at the end of each normalization cycle, so no cleanup needed here.
         suspendedWindowSlots.removeValue(forKey: windowId)
         // Invalidate fast focus cache if this window was cached
         if lastFastFocusedWindowId == windowId {

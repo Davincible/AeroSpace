@@ -9,6 +9,8 @@ private var demotedTabSlots: [String: BindingData] = [:]
 /// Tracks per-window suspended slots. When a window is individually demoted (e.g., it
 /// was the active tab and got switched away), we save its binding data here so it can
 /// be restored if it becomes active again.
+///
+/// Internal visibility required: accessed by MacWindow.garbageCollect() for cleanup.
 @MainActor
 var suspendedWindowSlots: [UInt32: BindingData] = [:]
 
@@ -34,7 +36,7 @@ private func validateStillPopups() async throws {
     // Snapshot children before iterating because promotion mutates the collection
     let children = Array(macosPopupWindowsContainer.children)
     for node in children {
-        let popup = (node as! MacWindow)
+        guard let popup = node as? MacWindow else { continue }
 
         // If this window is still a background tab, leave it in the popup container
         if isBackgroundTab(popup.windowId) { continue }
@@ -54,7 +56,10 @@ private func validateStillPopups() async throws {
         // This window is on-screen and not a background tab — promote it.
         // Try to restore to a saved slot if one exists.
         if let slot = tryRestoreTabSlot(for: popup) {
-            popup.bind(to: slot.parent, adaptiveWeight: slot.adaptiveWeight, index: slot.index)
+            // Clamp: siblings may have been removed since the slot was saved.
+            let clampedIndex = min(slot.index, slot.parent.children.count)
+            popup.bind(to: slot.parent, adaptiveWeight: slot.adaptiveWeight, index: clampedIndex)
+            try await tryOnWindowDetected(popup)
         } else {
             // No saved slot — fall back to standard relayout
             let windowLevel = getWindowLevel(for: popup.windowId)
@@ -73,6 +78,10 @@ private func validateStillPopups() async throws {
 private func tryRestoreTabSlot(for window: MacWindow) -> BindingData? {
     // 1. Check per-window suspended slot
     if let slot = suspendedWindowSlots.removeValue(forKey: window.windowId) {
+        // Also clean group-level slot to prevent stale references
+        if let groupKey = tabGroupKey(for: window.windowId) {
+            demotedTabSlots.removeValue(forKey: groupKey)
+        }
         if isParentAlive(slot) {
             return slot
         }
@@ -81,6 +90,7 @@ private func tryRestoreTabSlot(for window: MacWindow) -> BindingData? {
     // 2. Check tab-group slot
     if let groupKey = tabGroupKey(for: window.windowId),
        let slot = demotedTabSlots.removeValue(forKey: groupKey) {
+        suspendedWindowSlots.removeValue(forKey: window.windowId) // clean up cross-reference
         if isParentAlive(slot) {
             return slot
         }
@@ -123,6 +133,11 @@ private func _normalizeLayoutReason(workspace: Workspace, windows: [Window]) asy
                 } else if isBackgroundTab(window.asMacWindow().windowId) {
                     // Demote: this tiled/floating window is now a background tab.
                     // Save its tiling slot so the tab group can reclaim it later.
+                    //
+                    // Note: layoutReason intentionally left as .standard (not changed to .macos).
+                    // Background tab promotion is handled by validateStillPopups(), not by the
+                    // .macos case in exitMacOsNativeUnconventionalState(). This avoids conflating
+                    // tab state with macOS native fullscreen/minimize/hide state.
                     let bindingData = window.unbindFromParent()
                     if let groupKey = tabGroupKey(for: window.asMacWindow().windowId) {
                         demotedTabSlots[groupKey] = bindingData

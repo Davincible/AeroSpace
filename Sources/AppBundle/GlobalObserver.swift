@@ -105,6 +105,18 @@ enum GlobalObserver {
                 if !TrayMenuModel.shared.isEnabled { return Unmanaged.passUnretained(event) }
                 let flags = event.flags
                 let isModifier = flags.contains(config.mouseResizeModifier.cgEventFlag)
+
+                // Handle flagsChanged BEFORE the modifier guard.
+                // When the user releases the modifier mid-drag, we need to end the resize session.
+                // Previously, `guard isModifier` prevented release events from reaching the switch,
+                // making the .flagsChanged case dead code.
+                if type == .flagsChanged {
+                    if !isModifier {
+                        Task { @MainActor in await onCmdRightMouseUp() }
+                    }
+                    return Unmanaged.passUnretained(event)
+                }
+
                 guard isModifier else { return Unmanaged.passUnretained(event) }
                 switch type {
                     case .rightMouseDown:
@@ -119,11 +131,6 @@ enum GlobalObserver {
                     case .rightMouseUp:
                         Task { @MainActor in await onCmdRightMouseUp() }
                         return nil
-                    case .flagsChanged:
-                        if !isModifier {
-                            Task { @MainActor in await onCmdRightMouseUp() }
-                        }
-                        return Unmanaged.passUnretained(event)
                     default:
                         return Unmanaged.passUnretained(event)
                 }

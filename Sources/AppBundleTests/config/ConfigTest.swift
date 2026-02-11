@@ -449,6 +449,7 @@ final class ConfigTest: XCTestCase {
             WindowDetectedCallback( // 0
                 matcher: WindowDetectedCallbackMatcher(
                     appId: nil,
+                    appIdRegexSubstring: nil,
                     appNameRegexSubstring: nil,
                     windowTitleRegexSubstring: nil,
                 ),
@@ -461,6 +462,7 @@ final class ConfigTest: XCTestCase {
             WindowDetectedCallback( // 1
                 matcher: WindowDetectedCallbackMatcher(
                     appId: "com.apple.systempreferences",
+                    appIdRegexSubstring: nil,
                     appNameRegexSubstring: nil,
                     windowTitleRegexSubstring: nil,
                 ),
@@ -500,6 +502,18 @@ final class ConfigTest: XCTestCase {
             """,
         )
         XCTAssertTrue(config.onWindowDetected.singleOrNil()!.matcher.appNameRegexSubstring != nil)
+        assertEquals(errors, [])
+    }
+
+    func testParseOnWindowDetectedAppIdRegex() {
+        let (config, errors) = parseConfig(
+            """
+            [[on-window-detected]]
+                if.app-id-regex-substring = '^com\\.apple\\.'
+                run = []
+            """,
+        )
+        XCTAssertTrue(config.onWindowDetected.singleOrNil()!.matcher.appIdRegexSubstring != nil)
         assertEquals(errors, [])
     }
 

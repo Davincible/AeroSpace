@@ -6,11 +6,23 @@ private var windowLevelCache: [UInt32: MacOsWindowLevel] = [:]
 
 // MARK: - Tab Detection Cache
 
+/// Hashable key for tab group detection. Uses truncated integer bounds to avoid
+/// floating-point ambiguity at rounding boundaries and eliminates per-window string
+/// allocation. Int() truncation (floor for positive values) is deterministic, unlike
+/// rounded() which oscillates at the 0.5 boundary.
+struct TabGroupKey: Hashable {
+    let pid: Int32
+    let x: Int
+    let y: Int
+    let width: Int
+    let height: Int
+}
+
 @MainActor
 private var onScreenWindowIds: Set<UInt32> = []
 
 @MainActor
-private var tabGroupsCache: [String: TabGroup] = [:]
+private var tabGroupsCache: [TabGroupKey: TabGroup] = [:]
 
 private struct TabGroup {
     let pid: Int32
@@ -35,7 +47,7 @@ func isWindowOnScreen(_ windowId: UInt32) -> Bool {
 private var backgroundTabIds: Set<UInt32> = []
 
 @MainActor
-private var windowToTabGroupKey: [UInt32: String] = [:]
+private var windowToTabGroupKey: [UInt32: TabGroupKey] = [:]
 
 @MainActor
 func isBackgroundTab(_ windowId: UInt32) -> Bool {
@@ -43,7 +55,7 @@ func isBackgroundTab(_ windowId: UInt32) -> Bool {
 }
 
 @MainActor
-func tabGroupKey(for windowId: UInt32) -> String? {
+func tabGroupKey(for windowId: UInt32) -> TabGroupKey? {
     windowToTabGroupKey[windowId]
 }
 
@@ -57,6 +69,11 @@ func tabGroupKey(for windowId: UInt32) -> String? {
 /// one or more are not on-screen, they form a tab group. This detects native macOS
 /// tabs (NSWindow.addTabbedWindow) where each tab is a separate NSWindow that shares
 /// the same frame as the active tab.
+///
+/// Note: runLightSession (user-initiated commands) does NOT call this function.
+/// Commands run during rapid tab switching may operate on stale tab detection data
+/// for one frame. This is acceptable — scheduleRefreshSession triggers a full refresh
+/// shortly after, and the stale state is transient.
 @MainActor
 func refreshWindowAndTabCaches() {
     // Use .optionAll (not .optionOnScreenOnly) so we can see background tabs.
@@ -74,7 +91,7 @@ func refreshWindowAndTabCaches() {
         let pid: Int32
         let bounds: CGRect
     }
-    var boundsGroups: [String: BoundsGroupEntry] = [:]
+    var boundsGroups: [TabGroupKey: BoundsGroupEntry] = [:]
 
     for elem in cfArray {
         let dict = elem as NSDictionary
@@ -112,8 +129,9 @@ func refreshWindowAndTabCaches() {
         else { continue }
 
         // Composite key: PID + pixel-aligned bounds. Tabbed windows share identical frames.
-        // Round to integers to avoid non-deterministic Double string representations.
-        let groupKey = "\(pid)_\(Int(x.rounded()))_\(Int(y.rounded()))_\(Int(w.rounded()))_\(Int(h.rounded()))"
+        // Int() truncation (floor for positive values) is deterministic, unlike rounded()
+        // which oscillates at the 0.5 boundary.
+        let groupKey = TabGroupKey(pid: pid, x: Int(x), y: Int(y), width: Int(w), height: Int(h))
 
         var entry = boundsGroups[groupKey] ?? BoundsGroupEntry(pid: pid, bounds: CGRect(x: x, y: y, width: w, height: h))
         if windowIsOnScreen {
@@ -126,13 +144,24 @@ func refreshWindowAndTabCaches() {
 
     // Build tab groups: exactly 1 on-screen + 1 or more off-screen = tab group.
     //
-    // Known limitation (false positives): Two non-tabbed windows from the same app
-    // at pixel-identical coordinates where one is off-screen would be misidentified
-    // as a tab group. In practice this is extremely unlikely — AeroSpace tiles windows
-    // to non-overlapping positions, and the "exactly 1 on-screen" guard prevents most
-    // false matches. The worst case is a background tab that's actually just a hidden
-    // window, which will be harmlessly demoted and re-promoted on the next cycle.
-    var newTabGroups: [String: TabGroup] = [:]
+    // Known limitations (false positives):
+    //
+    // 1. Two non-tabbed windows from the same app at pixel-identical coordinates where
+    //    one is off-screen would be misidentified as a tab group. In practice this is
+    //    extremely unlikely — AeroSpace tiles windows to non-overlapping positions, and
+    //    the "exactly 1 on-screen" guard prevents most false matches.
+    //
+    // 2. macOS Spaces: a window on a different Space reports kCGWindowIsOnscreen=false
+    //    but retains its bounds. If two same-app windows on different Spaces share
+    //    identical bounds (e.g., both maximized on same-size monitors), they could be
+    //    misidentified as a tab group. AeroSpace mitigates this because it tiles windows
+    //    to different positions per workspace, but it's possible if two workspaces map
+    //    to the same monitor with identical single-window layouts.
+    //
+    // In both cases, the worst outcome is a harmless demotion — the window is sent to
+    // macosPopupWindowsContainer and re-promoted on the next cycle when the heuristic
+    // no longer matches. No crash, no data loss.
+    var newTabGroups: [TabGroupKey: TabGroup] = [:]
     for (key, entry) in boundsGroups {
         guard entry.onScreenIds.count == 1, !entry.offScreenIds.isEmpty else { continue }
 
@@ -146,7 +175,7 @@ func refreshWindowAndTabCaches() {
 
     // Build reverse lookups for O(1) tab queries
     var newBackgroundIds: Set<UInt32> = []
-    var newWindowToGroup: [UInt32: String] = [:]
+    var newWindowToGroup: [UInt32: TabGroupKey] = [:]
     for (key, group) in newTabGroups {
         newBackgroundIds.formUnion(group.backgroundWindowIds)
         if let active = group.activeWindowId { newWindowToGroup[active] = key }

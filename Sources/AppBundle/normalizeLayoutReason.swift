@@ -1,18 +1,43 @@
+// MARK: - Testing Note
+//
+// The tab detection feature currently has zero automated tests. The state machine
+// (demotion, promotion, slot management, cross-referencing) is complex enough to
+// warrant unit and integration tests. Key testability barriers:
+//   - CGWindowListCopyWindowInfo is a system call that can't be mocked without
+//     a protocol abstraction over the window list provider
+//   - TestWindow.asMacWindow() force-casts and crashes in unit tests
+//   - Window.get(byId:) in test mode doesn't search macosPopupWindowsContainer
+// See docs/aerospace-research/PLAN.md for the full test plan (T1-T14, S1-S10).
+
 // MARK: - Tab Demotion/Promotion State
 
-/// Tracks the tiling slot a tab group's active window occupied before being demoted.
-/// Keyed by tab group key (PID + bounds composite). When a different tab in the same
-/// group becomes active, it can reclaim this slot instead of being placed at the end.
+/// Tracks the tiling slot a tab group occupied before its windows were demoted.
+/// Keyed by tab group key (PID + bounds composite). When a tab in the group becomes
+/// active, it can reclaim this slot instead of being placed at the end of the tree.
+///
+/// First-write-wins: if multiple background tabs from the same group are demoted in
+/// one cycle, only the first-processed tab's slot is saved. This is acceptable because
+/// per-window `suspendedWindowSlots` provides individual tracking, and the group slot
+/// is a fallback for tabs that were never individually tiled.
 @MainActor
-private var demotedTabSlots: [String: BindingData] = [:]
+private var demotedTabSlots: [TabGroupKey: BindingData] = [:]
 
 /// Tracks per-window suspended slots. When a window is individually demoted (e.g., it
 /// was the active tab and got switched away), we save its binding data here so it can
 /// be restored if it becomes active again.
 ///
-/// Internal visibility required: accessed by MacWindow.garbageCollect() for cleanup.
+/// Note: both demotedTabSlots and suspendedWindowSlots are in-memory only — not persisted
+/// across AeroSpace restarts. On restart, refreshWindowAndTabCaches() will re-detect tab
+/// groups from scratch, and windows will be re-routed via normal detection. The original
+/// tiling position is lost; tabs will be placed based on MRU after restart.
 @MainActor
-var suspendedWindowSlots: [UInt32: BindingData] = [:]
+private var suspendedWindowSlots: [UInt32: BindingData] = [:]
+
+/// Removes the suspended slot for a window. Called from MacWindow.garbageCollect().
+@MainActor
+func cleanupSuspendedSlot(for windowId: UInt32) {
+    suspendedWindowSlots.removeValue(forKey: windowId)
+}
 
 // MARK: - normalizeLayoutReason
 
@@ -29,8 +54,28 @@ func normalizeLayoutReason() async throws {
     // They are only valid within a single refresh pass — if a promoted tab didn't
     // claim the slot this cycle, the slot is stale.
     demotedTabSlots.removeAll()
+
+    // Prune stale suspendedWindowSlots entries whose parent has been garbage collected.
+    // Unlike demotedTabSlots (per-cycle), suspendedWindowSlots persists across cycles
+    // to support tabs that remain in the background for many cycles. But the saved
+    // BindingData holds a strong reference to the parent TilingContainer, which could
+    // keep dead containers alive in memory. Prune entries where isParentAlive is false.
+    suspendedWindowSlots = suspendedWindowSlots.filter { _, slot in isParentAlive(slot) }
 }
 
+/// Validates popup container children: promotes windows that are no longer background tabs
+/// or that have changed type (popup → window) since registration.
+///
+/// This function serves dual duty:
+/// 1. **Tab promotion:** Background tabs that become active (on-screen, no longer in
+///    backgroundTabIds) are promoted back to their saved tiling slot via tryRestoreTabSlot.
+/// 2. **Popup re-evaluation:** Genuine popups that have changed AX type since registration
+///    are promoted via isWindowHeuristic. This is pre-existing behavior inherited from
+///    upstream AeroSpace — not introduced by tab detection.
+///
+/// Note: Popup container (`macosPopupWindowsContainer`) is NOT part of any workspace's
+/// tree, so windows here are never re-iterated by `_normalizeLayoutReason`. The only way
+/// back to the tiling tree is through this function.
 @MainActor
 private func validateStillPopups() async throws {
     // Snapshot children before iterating because promotion mutates the collection
@@ -111,6 +156,10 @@ private func isParentAlive(_ bindingData: BindingData) -> Bool {
     return false
 }
 
+/// Processes windows for layout normalization. Only iterates windows from workspace.allLeafWindowsRecursive
+/// and macosMinimizedWindowsContainer — windows in macosPopupWindowsContainer (including tab-demoted
+/// windows) are NOT included, so they won't be re-processed here. Tab promotion happens exclusively
+/// in validateStillPopups().
 @MainActor
 private func _normalizeLayoutReason(workspace: Workspace, windows: [Window]) async throws {
     for window in windows {
@@ -138,9 +187,13 @@ private func _normalizeLayoutReason(workspace: Workspace, windows: [Window]) asy
                     // Background tab promotion is handled by validateStillPopups(), not by the
                     // .macos case in exitMacOsNativeUnconventionalState(). This avoids conflating
                     // tab state with macOS native fullscreen/minimize/hide state.
+                    //
+                    // Safety: minimized/fullscreen/hidden checks above take precedence over tab detection.
+                    // A window that is both minimized AND detected as a background tab in the cache
+                    // will be routed to macosMinimizedWindowsContainer, never reaching this branch.
                     let bindingData = window.unbindFromParent()
                     if let groupKey = tabGroupKey(for: window.asMacWindow().windowId) {
-                        demotedTabSlots[groupKey] = bindingData
+                        demotedTabSlots[groupKey] = demotedTabSlots[groupKey] ?? bindingData
                     }
                     suspendedWindowSlots[window.windowId] = bindingData
                     window.bind(to: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)

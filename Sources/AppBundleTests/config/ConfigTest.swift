@@ -541,7 +541,10 @@ final class ConfigTest: XCTestCase {
             Gaps(
                 inner: .init(
                     vertical: .perMonitor(
-                        [PerMonitorValue(description: .main, value: 1), PerMonitorValue(description: .secondary, value: 2)],
+                        [
+                            PerMonitorValue(description: .main, value: 1, windows: nil, workspace: nil),
+                            PerMonitorValue(description: .secondary, value: 2, windows: nil, workspace: nil),
+                        ],
                         default: 5,
                     ),
                     horizontal: .constant(10),
@@ -551,12 +554,12 @@ final class ConfigTest: XCTestCase {
                     bottom: .constant(13),
                     top: .perMonitor(
                         [
-                            PerMonitorValue(description: .caseSensitivePattern("built-in")!, value: 3),
-                            PerMonitorValue(description: .secondary, value: 4),
+                            PerMonitorValue(description: .caseSensitivePattern("built-in")!, value: 3, windows: nil, workspace: nil),
+                            PerMonitorValue(description: .secondary, value: 4, windows: nil, workspace: nil),
                         ],
                         default: 6,
                     ),
-                    right: .perMonitor([PerMonitorValue(description: .sequenceNumber(2), value: 7)], default: 8),
+                    right: .perMonitor([PerMonitorValue(description: .sequenceNumber(2), value: 7, windows: nil, workspace: nil)], default: 8),
                 ),
             ),
         )

@@ -22,33 +22,24 @@ struct ResizeCommand: Command { // todo cover with tests
                 size = axSize
                 topLeftCorner = axTopLeftCorner
             }
+            let monitorRect = target.workspace.workspaceMonitor.visibleRect
 
             let computeTopLeftCornerAndSize = { (diffSize: CGSize) -> (CGPoint, CGSize) in
-                // Calculate current center of the window
-                let currentCenter = CGPoint(
-                    x: topLeftCorner.x + size.width / 2,
-                    y: topLeftCorner.y + size.height / 2,
-                )
+                // Enforce minimum size of 1 to prevent zero-size windows
+                var newWidth = max(1, size.width + diffSize.width)
+                var newHeight = max(1, size.height + diffSize.height)
+                newWidth = min(newWidth, monitorRect.width)
+                newHeight = min(newHeight, monitorRect.height)
 
-                // Calculate new size
-                let newSize = CGSize(
-                    width: size.width + diffSize.width,
-                    height: size.height + diffSize.height,
-                )
+                // Center the resized window on its previous center point
+                let centeredTopLeftX = topLeftCorner.x - diffSize.width / 2
+                let centeredTopLeftY = topLeftCorner.y - diffSize.height / 2
 
-                // Calculate new top-left corner to maintain the same center
-                let newTopLeftCorner = CGPoint(
-                    x: currentCenter.x - newSize.width / 2,
-                    y: currentCenter.y - newSize.height / 2,
-                )
+                // Clamp to monitor bounds using absolute coordinates (multi-monitor safe)
+                let clampedTopLeftX = min(max(centeredTopLeftX, monitorRect.minX), monitorRect.maxX - newWidth)
+                let clampedTopLeftY = min(max(centeredTopLeftY, monitorRect.minY), monitorRect.maxY - newHeight)
 
-                // Ensure the window doesn't go outside the monitor bounds
-                let clampedTopLeftCorner = CGPoint(
-                    x: max(0, min(newTopLeftCorner.x, target.workspace.workspaceMonitor.width - newSize.width)),
-                    y: max(0, min(newTopLeftCorner.y, target.workspace.workspaceMonitor.height - newSize.height)),
-                )
-
-                return (clampedTopLeftCorner, newSize)
+                return (CGPoint(x: clampedTopLeftX, y: clampedTopLeftY), CGSize(width: newWidth, height: newHeight))
             }
 
             let isWidthDominant = size.width >= size.height
@@ -112,7 +103,7 @@ struct ResizeCommand: Command { // todo cover with tests
                 node = candidates.first(where: { ($0.parent as? TilingContainer)?.orientation == orientation })
                 parent = node?.parent as? TilingContainer
         }
-        guard let parent else { return io.err("resize command doesn't support floating windows yet https://github.com/nikitabobko/AeroSpace/issues/9") }
+        guard let parent else { return io.err("resize command supports only `tiles` layout") }
         guard let orientation else { return false }
         guard let node else { return false }
         let diff: CGFloat = switch args.units.val {

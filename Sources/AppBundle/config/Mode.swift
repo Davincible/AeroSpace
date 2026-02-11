@@ -16,7 +16,7 @@ struct Mode: ConvenienceCopyable, Equatable, Sendable {
     static let zero = Mode()
 }
 
-func parseModes(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace, _ errors: inout [TomlParseError], _ mapping: [String: Key]) -> ([String: Mode], [String: String]) {
+func parseModes(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace, _ errors: inout [TomlParseError], _ mapping: [String: KeyOrModifier]) -> ([String: Mode], [String: String]) {
     guard let rawTable = raw.table else {
         errors += [expectedActualTypeError(expected: .table, actual: raw.type, backtrace)]
         return ([:], [:])
@@ -121,7 +121,7 @@ private func resolveBindings(_ modeName: String, _ modes: [String: Mode], _ cach
     return resolved
 }
 
-func parseMode(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace, _ errors: inout [TomlParseError], _ mapping: [String: Key]) -> Mode {
+func parseMode(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace, _ errors: inout [TomlParseError], _ mapping: [String: KeyOrModifier]) -> Mode {
     guard let rawTable: TOMLTable = raw.table else {
         errors += [expectedActualTypeError(expected: .table, actual: raw.type, backtrace)]
         return .zero

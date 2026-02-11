@@ -116,6 +116,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "accordion-padding": Parser(\.accordionPadding, parseInt),
     persistentWorkspacesKey: Parser(\.persistentWorkspaces, parsePersistentWorkspaces),
     "exec-on-workspace-change": Parser(\.execOnWorkspaceChange, parseArrayOfStrings),
+    "ignore-focus-from": Parser(\.ignoreFocusFrom, parseIgnoreFocusFrom),
     "exec": Parser(\.execConfig, parseExecConfig),
     "state-file": Parser(\.stateFilePath, parseOptionalString),
 
@@ -333,6 +334,10 @@ private func parseArrayOfStrings(_ raw: TOMLValueConvertible, _ backtrace: TomlB
                 parseString(elem, backtrace + .index(index))
             }
         }
+}
+
+private func parseIgnoreFocusFrom(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace) -> ParsedToml<Set<String>> {
+    parseArrayOfStrings(raw, backtrace).map { Set($0) }
 }
 
 private func parseDefaultContainerOrientation(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace) -> ParsedToml<DefaultContainerOrientation> {

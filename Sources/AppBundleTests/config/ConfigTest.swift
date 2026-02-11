@@ -401,6 +401,25 @@ final class ConfigTest: XCTestCase {
         ])
     }
 
+    func testIgnoreFocusFromParsing() {
+        let (config, errors) = parseConfig(
+            """
+            ignore-focus-from = ['com.logi.pluginservice', 'com.example.app']
+            """,
+        )
+        assertEquals(errors, [])
+        assertEquals(config.ignoreFocusFrom, Set(["com.logi.pluginservice", "com.example.app"]))
+    }
+
+    func testIgnoreFocusFromTypeMismatch() {
+        let (_, errors) = parseConfig(
+            """
+            ignore-focus-from = ['valid', 123]
+            """,
+        )
+        assertEquals(errors.descriptions, ["ignore-focus-from[1]: Expected type is 'string'. But actual type is 'integer'"])
+    }
+
     func testParseKeyMapping() {
         let (config, errors) = parseConfig(
             """

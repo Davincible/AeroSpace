@@ -45,6 +45,10 @@ on-focused-monitor-changed = ['move-mouse monitor-lazy-center']
 # Also see: https://nikitabobko.github.io/AeroSpace/goodies#disable-hide-app
 automatically-unhide-macos-hidden-apps = false
 
+# Ignore focus events from specified apps (prevents focus-stealing).
+# Use 'aerospace list-apps' to find app bundle IDs.
+# ignore-focus-from = ['com.logi.pluginservice']
+
 # List of workspaces that should stay alive even when they contain no windows,
 # even when they are invisible.
 # This config version is only available since 'config-version = 2'
@@ -214,8 +218,7 @@ on-mode-changed = []
     f = ['layout floating tiling', 'mode main'] # Toggle between floating and tiling layout
     backspace = ['close-all-windows-but-current', 'mode main']
 
-    # sticky is not yet supported https://github.com/nikitabobko/AeroSpace/issues/2
-    #s = ['layout sticky tiling', 'mode main']
+    s = ['layout sticky tiling', 'mode main'] # Toggle sticky (extractable from any layout)
 
     alt-shift-h = ['join-with left', 'mode main']
     alt-shift-j = ['join-with down', 'mode main']

@@ -120,6 +120,7 @@ extension String {
                 return switch f {
                     case .windowId: .success(.uint32(w.windowId))
                     case .windowIsFullscreen: .success(.bool(w.isFullscreen))
+                    case .windowIsSticky: .success(.bool(w.isSticky))
                     case .windowTitle: .success(.string(title))
                     case .windowLayout, .windowParentContainerLayout: toLayoutResult(w: w)
                 }
@@ -174,7 +175,10 @@ private func toLayoutResult(w: Window) -> Result<Primitive, String> {
     guard let parent = w.parent else { return .failure("NULL-PARENT") }
     return switch getChildParentRelation(child: w, parent: parent) {
         case .tiling(let tc): .success(.string(toLayoutString(tc: tc)))
-        case .floatingWindow: .success(.string(LayoutCmdArgs.LayoutDescription.floating.rawValue))
+        case .floatingWindow:
+            w.isSticky
+                ? .success(.string(LayoutCmdArgs.LayoutDescription.sticky.rawValue))
+                : .success(.string(LayoutCmdArgs.LayoutDescription.floating.rawValue))
         case .macosNativeFullscreenWindow: .success(.string("macos_native_fullscreen"))
         case .macosNativeHiddenAppWindow: .success(.string("macos_native_window_of_hidden_app"))
         case .macosNativeMinimizedWindow: .success(.string("macos_native_minimized"))

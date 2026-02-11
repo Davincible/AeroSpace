@@ -46,6 +46,8 @@ struct LayoutCommand: Command {
             return try await makeWindowTiling(window, workspace: workspace, io: io)
         case .floating:
             return makeWindowFloating(window, workspace: workspace)
+        case .sticky:
+            return try await makeWindowSticky(window, workspace: workspace, io: io)
     }
 }
 
@@ -77,6 +79,7 @@ struct LayoutCommand: Command {
         case .tilingContainer:
             return true // Nothing to do
         case .workspace(let windowWorkspace):
+            window.isSticky = false  // Clear sticky when tiling
             window.lastFloatingSize = try await window.getAxSize() ?? window.lastFloatingSize
             try await window.relayoutWindow(on: windowWorkspace, forceTile: true)
             return true
@@ -84,6 +87,7 @@ struct LayoutCommand: Command {
 }
 
 @MainActor private func makeWindowFloating(_ window: Window, workspace: Workspace) -> Bool {
+    window.isSticky = false  // Clear sticky when explicitly setting floating
     window.bindAsFloatingWindow(to: workspace)
     let workspaceRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
 
@@ -107,6 +111,27 @@ struct LayoutCommand: Command {
 
     window.setAxFrame(CGPoint(x: centerX, y: centerY), size)
     return true
+}
+
+@MainActor private func makeWindowSticky(_ window: Window, workspace: Workspace, io: CmdIo) async throws -> Bool {
+    guard let parent = window.parent else { return false }
+    switch parent.cases {
+        case .macosPopupWindowsContainer:
+            return io.err("Can't make popup windows sticky")
+        case .macosMinimizedWindowsContainer, .macosFullscreenWindowsContainer, .macosHiddenAppsWindowsContainer:
+            return io.err("Can't make macOS minimized, fullscreen, or hidden app windows sticky")
+        case .tilingContainer:
+            // Convert to floating first, then make sticky
+            window.lastFloatingSize = try await window.getAxSize() ?? window.lastFloatingSize
+            window.bindAsFloatingWindow(to: workspace)
+            if let size = window.lastFloatingSize { window.setAxFrame(nil, size) }
+            window.isSticky = true
+            return true
+        case .workspace:
+            // Already floating, toggle sticky
+            window.isSticky.toggle()
+            return true
+    }
 }
 
 @MainActor private func applyLayoutToAllWindowsInWorkspace(_ workspace: Workspace, _ io: CmdIo, _ targetDescription: LayoutCmdArgs.LayoutDescription) async throws -> Bool {
@@ -134,7 +159,8 @@ extension Window {
             case .h_tiles:     (parent as? TilingContainer).map { $0.layout == .tiles && $0.orientation == .h } == true
             case .v_tiles:     (parent as? TilingContainer).map { $0.layout == .tiles && $0.orientation == .v } == true
             case .tiling:      parent is TilingContainer
-            case .floating:    parent is Workspace
+            case .floating:    parent is Workspace && !isSticky
+            case .sticky:      parent is Workspace && isSticky
         }
     }
 }

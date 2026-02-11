@@ -128,6 +128,12 @@ func refreshModel() {
 
 @MainActor
 private func refresh() async throws {
+    // Refresh tab detection and window level caches before processing windows.
+    // This single CGWindowListCopyWindowInfo call populates: window levels,
+    // on-screen window set, and tab group membership — all needed by downstream
+    // code that decides whether a window is a background tab.
+    refreshWindowAndTabCaches()
+
     // Garbage collect terminated apps and windows before working with all windows
     let mapping = try await MacApp.refreshAllAndGetAliveWindowIds(frontmostAppBundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
     let aliveWindowIds = mapping.values.flatMap { $0 }.toSet()

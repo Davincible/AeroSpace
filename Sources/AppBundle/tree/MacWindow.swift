@@ -84,6 +84,8 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
+        // Clean up tab demotion/promotion tracking for this window
+        suspendedWindowSlots.removeValue(forKey: windowId)
         // Invalidate fast focus cache if this window was cached
         if lastFastFocusedWindowId == windowId {
             invalidateFastFocusCache()
@@ -281,6 +283,12 @@ extension Window {
 // The function is private because it's unsafe. It leaves the window in unbound state
 @MainActor
 private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: MacApp, _ workspace: Workspace, window: Window?) async throws -> BindingData {
+    // Background tabs should not be tiled — route directly to popup container.
+    // This check runs BEFORE the expensive AX call to getAxUiElementWindowType.
+    if isBackgroundTab(windowId) {
+        return BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+    }
+
     let windowLevel = getWindowLevel(for: windowId)
     return switch try await macApp.getAxUiElementWindowType(windowId, windowLevel) {
         case .popup: BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)

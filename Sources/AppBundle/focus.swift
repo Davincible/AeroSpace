@@ -55,6 +55,9 @@ enum FocusSource {
     case unknown
 }
 
+// Global counter for tracking window focus order (monotonically increasing)
+@MainActor var windowFocusSequence: UInt64 = 0
+
 @MainActor private var _focus: FrozenFocus = {
     let monitor = mainMonitor
     return FrozenFocus(windowId: nil, workspaceName: monitor.activeWorkspace.name, monitorId: monitor.monitorId.map { $0 + 1 } ?? 0)
@@ -78,6 +81,11 @@ enum FocusSource {
     let status = newFocus.workspace.workspaceMonitor.setActiveWorkspace(newFocus.workspace)
 
     newFocus.windowOrNil?.markAsMostRecentChild()
+    // Update global focus sequence for recent window tracking
+    if let window = newFocus.windowOrNil {
+        windowFocusSequence += 1
+        window.lastFocusedAt = windowFocusSequence
+    }
     return status
 }
 extension Window {

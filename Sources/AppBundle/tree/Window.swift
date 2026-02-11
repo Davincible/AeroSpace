@@ -10,6 +10,7 @@ open class Window: TreeNode, Hashable {
     var noOuterGapsInFullscreen: Bool = false
     var layoutReason: LayoutReason = .standard
     var persistentFullscreen: Bool = false
+    var lastFocusedAt: UInt64 = 0 // Monotonically increasing value, 0 means never focused
 
     @MainActor
     init(id: UInt32, _ app: any AbstractApp, lastFloatingSize: CGSize?, parent: NonLeafTreeNodeObject, adaptiveWeight: CGFloat, index: Int) {

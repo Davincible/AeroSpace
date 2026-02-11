@@ -84,6 +84,10 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
+        // Invalidate fast focus cache if this window was cached
+        if lastFastFocusedWindowId == windowId {
+            invalidateFastFocusCache()
+        }
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
@@ -125,20 +129,29 @@ final class MacWindow: Window {
     @MainActor
     func hideInCorner(_ corner: OptimalHideCorner) async throws {
         guard let nodeMonitor else { return }
-        // Don't accidentally override prevUnhiddenEmulationPosition in case of subsequent
-        // `hideEmulation` calls
-        if !isHiddenInCorner {
-            guard let windowRect = try await getAxRect() else { return }
-            let topLeftCorner = windowRect.topLeftCorner
-            let monitorRect = windowRect.center.monitorApproximation.rect // Similar to layoutFloatingWindow. Non idempotent
-            let absolutePoint = topLeftCorner - monitorRect.topLeftCorner
-            prevUnhiddenProportionalPositionInsideWorkspaceRect =
-                CGPoint(x: absolutePoint.x / monitorRect.width, y: absolutePoint.y / monitorRect.height)
+
+        // Skip if already hidden in corner - avoid redundant AX calls
+        if isHiddenInCorner { return }
+
+        // Get window rect - use SkyLight if available for speed
+        let windowRect: Rect?
+        if config.useFastFocus && SkyLight.isAvailable, let bounds = SkyLight.getWindowBounds(windowId) {
+            windowRect = Rect(topLeftX: bounds.origin.x, topLeftY: bounds.origin.y, width: bounds.width, height: bounds.height)
+        } else {
+            windowRect = try await getAxRect()
         }
+
+        guard let windowRect else { return }
+        let topLeftCorner = windowRect.topLeftCorner
+        let monitorRect = windowRect.center.monitorApproximation.rect // Similar to layoutFloatingWindow. Non idempotent
+        let absolutePoint = topLeftCorner - monitorRect.topLeftCorner
+        prevUnhiddenProportionalPositionInsideWorkspaceRect =
+            CGPoint(x: absolutePoint.x / monitorRect.width, y: absolutePoint.y / monitorRect.height)
+
         let p: CGPoint
         switch corner {
             case .bottomLeftCorner:
-                guard let s = try await getAxSize() else { fallthrough }
+                let s = windowRect.size
                 // Zoom will jump off if you do one pixel offset https://github.com/nikitabobko/AeroSpace/issues/527
                 // todo this ad hoc won't be necessary once I implement optimization suggested by Zalim
                 let onePixelOffset = macApp.appId == .zoom ? .zero : CGPoint(x: 1, y: -1)
@@ -149,6 +162,12 @@ final class MacWindow: Window {
                 let onePixelOffset = macApp.appId == .zoom ? .zero : CGPoint(x: 1, y: 1)
                 p = nodeMonitor.visibleRect.bottomRightCorner - onePixelOffset
         }
+        lastAppliedLayoutPhysicalRect = Rect(
+            topLeftX: p.x,
+            topLeftY: p.y,
+            width: windowRect.width,
+            height: windowRect.height
+        )
         setAxFrame(p, nil)
     }
 
@@ -184,6 +203,43 @@ final class MacWindow: Window {
     }
 
     override func setAxFrame(_ topLeft: CGPoint?, _ size: CGSize?) {
+        if let topLeft, let size {
+            let nextRect = Rect(
+                topLeftX: topLeft.x,
+                topLeftY: topLeft.y,
+                width: size.width,
+                height: size.height
+            )
+            if let prev = lastAppliedLayoutPhysicalRect {
+                if prev.approximatelyEquals(nextRect, positionTolerance: 1.0, sizeTolerance: 0.5) {
+                    return
+                }
+                if prev.approximatelySameSize(nextRect) {
+                    lastAppliedLayoutPhysicalRect = nextRect
+                    macApp.setAxFrame(windowId, topLeft, nil)
+                    return
+                }
+            }
+            lastAppliedLayoutPhysicalRect = nextRect
+            macApp.setAxFrame(windowId, topLeft, size)
+            return
+        }
+
+        if let topLeft, let prev = lastAppliedLayoutPhysicalRect {
+            lastAppliedLayoutPhysicalRect = Rect(
+                topLeftX: topLeft.x,
+                topLeftY: topLeft.y,
+                width: prev.width,
+                height: prev.height
+            )
+        } else if let size, let prev = lastAppliedLayoutPhysicalRect {
+            lastAppliedLayoutPhysicalRect = Rect(
+                topLeftX: prev.topLeftX,
+                topLeftY: prev.topLeftY,
+                width: size.width,
+                height: size.height
+            )
+        }
         macApp.setAxFrame(windowId, topLeft, size)
     }
 
@@ -195,6 +251,7 @@ final class MacWindow: Window {
         try await macApp.getAxTopLeftCorner(windowId)
     }
 
+    @MainActor
     override func getAxRect() async throws -> Rect? {
         try await macApp.getAxRect(windowId)
     }
@@ -247,7 +304,13 @@ func tryOnWindowDetected(_ window: Window) async throws {
     switch parent.cases {
         case .tilingContainer, .workspace, .macosMinimizedWindowsContainer,
              .macosFullscreenWindowsContainer, .macosHiddenAppsWindowsContainer:
+            // Auto-center floating windows when they are detected. MacOs may
+            // decide to place the window on a different monitor.
+            if window.isFloating {
+                try await centerFloatingWindow(window)
+            }
             try await onWindowDetected(window)
+
         case .macosPopupWindowsContainer:
             break
     }
@@ -261,6 +324,31 @@ private func onWindowDetected(_ window: Window) async throws {
             return
         }
     }
+}
+
+@MainActor
+private func centerFloatingWindow(_ window: Window) async throws {
+    guard let workspace = window.parent as? Workspace else { return }
+    let monitor = workspace.workspaceMonitor
+
+    // Get the monitor's visible rect (with padding)
+    let monitorRect = monitor.visibleRectPaddedByOuterGaps
+
+    // Get the current window size
+    guard let windowSize = try await window.getAxSize() else { return }
+
+    // Calculate the center position for the window
+    let centerX = monitorRect.topLeftX + (monitorRect.width - windowSize.width) / 2
+    let centerY = monitorRect.topLeftY + (monitorRect.height - windowSize.height) / 2
+
+    // Ensure the window doesn't go outside the monitor bounds
+    let clampedX = max(monitorRect.topLeftX, min(centerX, monitorRect.topLeftX + monitorRect.width - windowSize.width))
+    let clampedY = max(monitorRect.topLeftY, min(centerY, monitorRect.topLeftY + monitorRect.height - windowSize.height))
+
+    let newPosition = CGPoint(x: clampedX, y: clampedY)
+
+    // Move the window to the center
+    window.setAxFrame(newPosition, windowSize)
 }
 
 extension WindowDetectedCallback {

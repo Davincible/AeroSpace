@@ -1,8 +1,67 @@
-# AeroSpace Beta [![Build](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml)
+# Dev's Best AeroSpace [![Build](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml)
+
+This fork is an opinionated improvement of the AeroSpace window manager providing an optimized out-of-box experience for software engineers.
+
+---
+
+## NEW FEATURES IN THIS FORK
+
+### Save and Load Window State
+
+This fork adds the ability to save and restore your entire window management state, including:
+- Window positions and sizes
+- Workspace assignments
+- Tiling tree structure (layouts, orientations, weights)
+- Floating window positions
+
+#### Commands
+
+```bash
+# Save current state to a file
+aerospace save-state ~/my-layout.json
+
+# Load state from a file
+aerospace load-state ~/my-layout.json
+```
+
+#### Configuration
+
+You can set a default state file in your `~/.aerospace.toml`:
+
+```toml
+# Default state file path for save-state and load-state commands
+state-file = "~/.aerospace-state.json"
+```
+
+With this configured, you can simply run:
+
+```bash
+aerospace save-state   # Uses the configured path
+aerospace load-state   # Uses the configured path
+```
+
+#### How It Works
+
+- **Save**: Captures each window's app bundle ID, title, position, size, and workspace
+- **Load**: Matches windows by app bundle ID + window title, then restores their positions
+- Windows that no longer exist are gracefully skipped
+- New windows not in the saved state remain in their current position
+
+#### Use Cases
+
+- Save your preferred layout before a restart
+- Switch between different workflow layouts (coding, meetings, etc.)
+- Restore windows after accidentally rearranging them
+
+---
+
+# Original AeroSpace README [![Build](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml)
 
 <img src="./resources/Assets.xcassets/AppIcon.appiconset/icon.png" width="40%" align="right">
 
-AeroSpace is an i3-like tiling window manager for macOS
+AeroSpace is an i3-like tiling window manager for macOS.
+
+---
 
 Videos:
 - [YouTube 91 sec Demo](https://www.youtube.com/watch?v=UOl7ErqWbrk)

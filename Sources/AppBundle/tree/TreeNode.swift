@@ -31,6 +31,7 @@ open class TreeNode: Equatable, AeroAny {
     }
 
     /// See: ``getWeight(_:)``
+    @MainActor
     func setWeight(_ targetOrientation: Orientation, _ newValue: CGFloat) {
         guard let parent else { die("Can't change weight if TreeNode doesn't have parent") }
         switch getChildParentRelation(child: self, parent: parent) {
@@ -42,6 +43,7 @@ open class TreeNode: Equatable, AeroAny {
                     die("Weight can be changed only for nodes whose parent has 'tiles' layout")
                 }
                 adaptiveWeight = newValue
+                markLayoutMutation()
             default:
                 die("Can't change weight")
         }
@@ -66,9 +68,11 @@ open class TreeNode: Equatable, AeroAny {
     @MainActor
     @discardableResult
     func bind(to newParent: NonLeafTreeNodeObject, adaptiveWeight: CGFloat, index: Int) -> BindingData? {
+        let wasBound = parent != nil
         let result = unbindIfBound()
 
         if newParent === NilTreeNode.instance {
+            if wasBound { markLayoutMutation() }
             return result
         }
         let relation = getChildParentRelation(child: self, parent: newParent) // Side effect: verify relation
@@ -92,9 +96,11 @@ open class TreeNode: Equatable, AeroAny {
         // 2. Misbehaved apps that abuse real window as popups https://github.com/nikitabobko/AeroSpace/issues/106 (the
         //    last appeared window, is not necessarily the one that has the focus)
         markAsMostRecentChild()
+        markLayoutMutation()
         return result
     }
 
+    @MainActor
     private func unbindIfBound() -> BindingData? {
         guard let _parent else { return nil }
 
@@ -117,9 +123,14 @@ open class TreeNode: Equatable, AeroAny {
         return iterator.next() ?? children.last
     }
 
+    @MainActor
     @discardableResult
     func unbindFromParent() -> BindingData {
-        unbindIfBound() ?? dieT("\(self) is already unbound. The stacktrace where it was unbound:\n\(unboundStacktrace ?? "nil")")
+        let stacktrace = unboundStacktrace ?? "nil"
+        let result = unbindIfBound()
+            ?? dieT("\(self) is already unbound. The stacktrace where it was unbound:\n\(stacktrace)")
+        markLayoutMutation()
+        return result
     }
 
     nonisolated public static func == (lhs: TreeNode, rhs: TreeNode) -> Bool {

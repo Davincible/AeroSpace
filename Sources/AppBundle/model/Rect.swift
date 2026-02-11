@@ -61,4 +61,20 @@ extension Rect {
     var size: CGSize { CGSize(width: width, height: height) }
 
     func getDimension(_ orientation: Orientation) -> CGFloat { orientation == .h ? width : height }
+
+    func approximatelyEquals(
+        _ other: Rect,
+        positionTolerance: CGFloat = 0.5,
+        sizeTolerance: CGFloat = 0.5
+    ) -> Bool {
+        abs(topLeftX - other.topLeftX) <= positionTolerance &&
+            abs(topLeftY - other.topLeftY) <= positionTolerance &&
+            abs(width - other.width) <= sizeTolerance &&
+            abs(height - other.height) <= sizeTolerance
+    }
+
+    func approximatelySameSize(_ other: Rect, tolerance: CGFloat = 0.5) -> Bool {
+        abs(width - other.width) <= tolerance &&
+            abs(height - other.height) <= tolerance
+    }
 }

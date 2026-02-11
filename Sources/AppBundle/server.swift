@@ -82,19 +82,22 @@ private func newConnection(_ connection: NWConnection) async { // todo add exit 
             continue
         }
         if let command {
+            let cmdName = request.args.first ?? "unknown"
             let _answer: Result<ServerAnswer, Error> = await Result {
-                try await runLightSession(.socketServer, token) { () throws in
-                    let env = CmdEnv.init(
-                        windowId: request.windowId.flatMap { $0 },
-                        workspaceName: request.workspace.flatMap { $0 },
-                    )
-                    let cmdResult = try await command.run(env, CmdStdin(request.stdin))
-                    return ServerAnswer(
-                        exitCode: cmdResult.exitCode,
-                        stdout: cmdResult.stdout.joined(separator: "\n"),
-                        stderr: cmdResult.stderr.joined(separator: "\n"),
-                        serverVersionAndHash: serverVersionAndHash,
-                    )
+                try await PerfLog.measureAsync("CMD", cmdName) {
+                    try await runLightSession(.socketServer, token) { () throws in
+                        let env = CmdEnv.init(
+                            windowId: request.windowId.flatMap { $0 },
+                            workspaceName: request.workspace.flatMap { $0 },
+                        )
+                        let cmdResult = try await command.run(env, CmdStdin(request.stdin))
+                        return ServerAnswer(
+                            exitCode: cmdResult.exitCode,
+                            stdout: cmdResult.stdout.joined(separator: "\n"),
+                            stderr: cmdResult.stderr.joined(separator: "\n"),
+                            serverVersionAndHash: serverVersionAndHash,
+                        )
+                    }
                 }
             }
             var answer = _answer.getOrNil() ??

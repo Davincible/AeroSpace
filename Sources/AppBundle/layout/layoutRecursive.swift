@@ -8,7 +8,9 @@ extension Workspace {
         // If monitors are aligned vertically and the monitor below has smaller width, then macOS may not allow the
         // window on the upper monitor to take full width. rect.height - 1 resolves this problem
         // But I also faced this problem in monitors horizontal configuration. ¯\_(ツ)_/¯
-        try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
+        try await PerfLog.measureAsync("LAYOUT", "workspace", context: name) {
+            try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
+        }
     }
 }
 
@@ -28,14 +30,26 @@ extension TreeNode {
                 }
             case .window(let window):
                 if window.windowId != currentlyManipulatedWithMouseWindowId {
-                    lastAppliedLayoutVirtualRect = virtual
+                    let previousRect = window.lastAppliedLayoutPhysicalRect
+                    window.lastAppliedLayoutVirtualRect = virtual
                     if window.isFullscreen && window == context.workspace.rootTilingContainer.mostRecentWindowRecursive {
-                        lastAppliedLayoutPhysicalRect = nil
+                        window.lastAppliedLayoutPhysicalRect = nil
                         window.layoutFullscreen(context)
                     } else {
-                        lastAppliedLayoutPhysicalRect = physicalRect
+                        let nextRect = physicalRect
+                        if let previousRect,
+                           previousRect.approximatelyEquals(nextRect, positionTolerance: 1.0, sizeTolerance: 0.5)
+                        {
+                            window.lastAppliedLayoutPhysicalRect = nextRect
+                            return
+                        }
+
                         window.isFullscreen = false
-                        window.setAxFrame(point, CGSize(width: width, height: height))
+                        if let previousRect, previousRect.approximatelySameSize(nextRect) {
+                            window.setAxFrame(nextRect.topLeftCorner, nil)
+                        } else {
+                            window.setAxFrame(nextRect.topLeftCorner, nextRect.size)
+                        }
                     }
                 }
             case .tilingContainer(let container):
@@ -71,6 +85,9 @@ extension Window {
         let workspace = context.workspace
         let currentMonitor = try await getCenter()?.monitorApproximation // Probably not idempotent
         if let currentMonitor, let windowTopLeftCorner = try await getAxTopLeftCorner(), workspace != currentMonitor.activeWorkspace {
+            // Don't override workspace assignment during drag operations
+            if isDraggingFloatingWindow { return }
+
             let xProportion = (windowTopLeftCorner.x - currentMonitor.visibleRect.topLeftX) / currentMonitor.visibleRect.width
             let yProportion = (windowTopLeftCorner.y - currentMonitor.visibleRect.topLeftY) / currentMonitor.visibleRect.height
 

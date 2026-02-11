@@ -112,10 +112,12 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "start-at-login": Parser(\.startAtLogin, parseBool),
     "auto-reload-config": Parser(\.autoReloadConfig, parseBool),
     "automatically-unhide-macos-hidden-apps": Parser(\.automaticallyUnhideMacosHiddenApps, parseBool),
+    "use-fast-focus": Parser(\.useFastFocus, parseBool),
     "accordion-padding": Parser(\.accordionPadding, parseInt),
     persistentWorkspacesKey: Parser(\.persistentWorkspaces, parsePersistentWorkspaces),
     "exec-on-workspace-change": Parser(\.execOnWorkspaceChange, parseArrayOfStrings),
     "exec": Parser(\.execConfig, parseExecConfig),
+    "state-file": Parser(\.stateFilePath, parseOptionalString),
 
     keyMappingConfigRootKey: Parser(\.keyMapping, skipParsing(Config().keyMapping)), // Parsed manually
     modeConfigRootKey: Parser(\.modes, skipParsing(Config().modes)), // Parsed manually
@@ -251,6 +253,10 @@ func parseInt(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace) -> Parsed
 
 func parseString(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace) -> ParsedToml<String> {
     raw.string.orFailure(expectedActualTypeError(expected: .string, actual: raw.type, backtrace))
+}
+
+func parseOptionalString(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace) -> ParsedToml<String?> {
+    parseString(raw, backtrace).map { $0 }
 }
 
 func parseSimpleType<T>(_ raw: TOMLValueConvertible) -> T? {

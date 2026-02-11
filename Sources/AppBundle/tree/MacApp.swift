@@ -1,5 +1,6 @@
 import AppKit
 import Common
+import PrivateApi
 
 // Potential alternative implementation
 // https://github.com/swiftlang/swift-evolution/blob/main/proposals/0392-custom-actor-executors.md
@@ -102,10 +103,12 @@ final class MacApp: AbstractApp {
 
     // todo merge together with detectNewWindows
     func getFocusedWindow() async throws -> Window? {
-        let windowId = try await thread?.runInLoop { [nsApp, axApp, windows] job in
-            try axApp.threadGuarded.get(Ax.focusedWindowAttr)
-                .flatMap { try windows.threadGuarded.getOrRegisterAxWindow(windowId: $0.windowId, $0.ax.cast, nsApp, job) }?
-                .windowId
+        let windowId = try await PerfLog.measureAsync("AX", "getFocusedWindow", context: "pid=\(pid)") {
+            try await thread?.runInLoop { [nsApp, axApp, windows] job in
+                try axApp.threadGuarded.get(Ax.focusedWindowAttr)
+                    .flatMap { try windows.threadGuarded.getOrRegisterAxWindow(windowId: $0.windowId, $0.ax.cast, nsApp, job) }?
+                    .windowId
+            }
         }
         guard let windowId else { return nil }
         return try await MacWindow.getOrRegister(windowId: windowId, macApp: self)
@@ -114,30 +117,155 @@ final class MacApp: AbstractApp {
     @MainActor func nativeFocus(_ windowId: UInt32) {
         if serverArgs.isReadOnly { return }
         MacApp.focusJob?.cancel()
+
+        // Try fast path using SkyLight private API first (requires SIP disabled)
+        if config.useFastFocus && SkyLight.isAvailable {
+            nativeFocusFast(windowId)
+            return
+        }
+
+        // Fallback to standard AX-based focus
+        PerfLog.measure("FOCUS", "ax", context: "wid=\(windowId)") {
+            nativeFocusStandard(windowId)
+        }
+    }
+    
+    /// Fast focus using SkyLight private API - requires SIP to be partially disabled
+    @MainActor private func nativeFocusFast(_ windowId: UInt32) {
+        let tracker = PerfTracker("FOCUS", "fast wid=\(windowId)")
+        
+        // Same optimization as standard focus: skip if already focused
+        // But still need to activate the app to bring it to front
+        if (!NSScreen.screensHaveSeparateSpaces || monitors.count == 1) &&
+            (lastNativeFocusedWindowId == windowId || windowsCount == 1)
+        {
+            tracker.step("skip-already-focused")
+            if !nsApp.isActive {
+                nsApp.activate(options: .activateIgnoringOtherApps)
+            }
+            updateFastFocusCache(windowId: windowId, pid: pid)
+            tracker.finish()
+            return
+        }
+
+        // Get PSN for SkyLight focus
+        tracker.step("get-psn")
+        guard let psn = SkyLight.getWindowPSN(windowId: windowId) else {
+            PerfLog.warn("FOCUS", "PSN lookup failed for wid=\(windowId), falling back to AX")
+            invalidateFastFocusCache()
+            tracker.step("fallback-ax")
+            nativeFocusStandard(windowId)
+            tracker.finish()
+            return
+        }
+
+        // For same-app window switching, we need to use AX to set the main window
+        // because _SLPSSetFrontProcessWithOptions doesn't switch windows within the same app
+        let isSameApp = nsApp.isActive
+        if isSameApp && windowsCount > 1 {
+            tracker.step("same-app-ax-raise")
+            // Use AX to raise the specific window within the same app
+            MacApp.focusJob = withWindowAsync(windowId) { [nsApp] window, job in
+                window.set(Ax.isMainAttr, true)
+                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+                if !nsApp.isActive {
+                    nsApp.activate(options: .activateIgnoringOtherApps)
+                }
+            }
+            updateFastFocusCache(windowId: windowId, pid: pid)
+            tracker.finish()
+            return
+        }
+
+        // Set the process as front process with the specific window
+        tracker.step("skylight-focus")
+        var mutablePsn = psn
+        let result = _SLPSSetFrontProcessWithOptions(&mutablePsn, windowId, UInt32(kCPSUserGenerated))
+
+        // Order window to front after setting front process
+        if result == .success {
+            tracker.step("order-window")
+            _ = SkyLight.orderWindow(windowId, mode: 1, relativeTo: 0)
+            updateFastFocusCache(windowId: windowId, pid: pid)
+        } else {
+            PerfLog.warn("FOCUS", "SkyLight focus failed for wid=\(windowId), falling back to AX")
+            invalidateFastFocusCache()
+            tracker.step("fallback-ax")
+            nativeFocusStandard(windowId)
+        }
+        tracker.finish()
+    }
+    
+    /// Standard focus using AX API
+    @MainActor private func nativeFocusStandard(_ windowId: UInt32) {
         // Performance optimization. If possible avoid doing AX requests
         // (important for apps which are slow at responding even such basic AX requests. E.g. Godot)
         // Beware of the macOS bug: https://github.com/nikitabobko/AeroSpace/issues/101
         if (!NSScreen.screensHaveSeparateSpaces || monitors.count == 1) &&
             (lastNativeFocusedWindowId == windowId || windowsCount == 1)
         {
-            nsApp.activate(options: .activateIgnoringOtherApps)
+            if !nsApp.isActive {
+                nsApp.activate(options: .activateIgnoringOtherApps)
+            }
         } else {
             MacApp.focusJob = withWindowAsync(windowId) { [nsApp] window, job in
                 // Raise firstly to make sure that by the time we activate the app, the window would be already on top
                 window.set(Ax.isMainAttr, true)
                 AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-                nsApp.activate(options: .activateIgnoringOtherApps)
+                if !nsApp.isActive {
+                    nsApp.activate(options: .activateIgnoringOtherApps)
+                }
             }
         }
     }
 
     func setAxFrame(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
+        let moveContext = moveLogContext(windowId)
+        // Fast path: use SkyLight for position-only changes when available
+        // Note: We check SkyLight.isAvailable which doesn't require MainActor
+        // The config check is done at a higher level (MacWindow.setAxFrame)
+        if size == nil, let topLeft, SkyLight.isAvailable {
+            // SkyLight can only move, not resize - use it for pure moves
+            let success = PerfLog.measure("MOVE", "skylight", context: moveContext) {
+                SkyLight.moveWindow(windowId, to: topLeft)
+            }
+            if success { return }
+            PerfLog.warn("MOVE", "SkyLight move failed for \(moveContext), falling back to AX")
+        }
+
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
         setFrameJobs[windowId] = withWindowAsync(windowId) { [axApp] window, job in
-            try disableAnimations(app: axApp.threadGuarded, job) {
-                try setFrame(window, topLeft, size, job)
+            try PerfLog.measure("MOVE", "ax", context: moveContext) {
+                try disableAnimations(app: axApp.threadGuarded, job) {
+                    try setFrame(window, topLeft, size, job)
+                }
             }
         }
+    }
+
+    private func moveLogContext(_ windowId: UInt32) -> String {
+        let appName = (name ?? "unknown").replacingOccurrences(of: " ", with: "_")
+        let bundleId = rawAppBundleId ?? "unknown"
+        return "wid=\(windowId) app=\(appName) bundle=\(bundleId)"
+    }
+
+    /// Fast move using SkyLight - returns true if successful (call from MainActor context)
+    @MainActor
+    func setFrameFast(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) -> Bool {
+        guard config.useFastFocus && SkyLight.isAvailable else { return false }
+
+        // SkyLight can only move windows, not resize them
+        // For resize, we still need AX API
+        if size != nil {
+            // Need to use AX for resize
+            return false
+        }
+
+        if let topLeft {
+            return SkyLight.moveWindow(windowId, to: topLeft)
+        }
+
+        return true
     }
 
     func setAxFrameBlocking(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) async throws {
@@ -156,16 +284,29 @@ final class MacApp: AbstractApp {
     }
 
     func getAxTopLeftCorner(_ windowId: UInt32) async throws -> CGPoint? {
-        try await withWindow(windowId) { window, job in
-            window.get(Ax.topLeftCornerAttr)
+        try await PerfLog.measureAsync("AX", "getTopLeftCorner", context: "wid=\(windowId)") {
+            try await withWindow(windowId) { window, job in
+                window.get(Ax.topLeftCornerAttr)
+            }
         }
     }
 
+    @MainActor
     func getAxRect(_ windowId: UInt32) async throws -> Rect? {
-        try await withWindow(windowId) { window, job in
-            guard let topLeftCorner = window.get(Ax.topLeftCornerAttr) else { return nil }
-            guard let size = window.get(Ax.sizeAttr) else { return nil }
-            return Rect(topLeftX: topLeftCorner.x, topLeftY: topLeftCorner.y, width: size.width, height: size.height)
+        // Fast path: use SkyLight if available
+        if config.useFastFocus && SkyLight.isAvailable {
+            if let bounds = SkyLight.getWindowBounds(windowId) {
+                return Rect(topLeftX: bounds.origin.x, topLeftY: bounds.origin.y, width: bounds.width, height: bounds.height)
+            }
+        }
+        
+        // Fallback to AX
+        return try await PerfLog.measureAsync("AX", "getRect", context: "wid=\(windowId)") {
+            try await withWindow(windowId) { window, job in
+                guard let topLeftCorner = window.get(Ax.topLeftCornerAttr) else { return nil }
+                guard let size = window.get(Ax.sizeAttr) else { return nil }
+                return Rect(topLeftX: topLeftCorner.x, topLeftY: topLeftCorner.y, width: size.width, height: size.height)
+            }
         }
     }
 

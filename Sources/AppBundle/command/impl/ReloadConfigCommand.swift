@@ -25,6 +25,11 @@ struct ReloadConfigCommand: Command {
     forceConfigUrl: URL? = nil,
     stdout: inout String,
 ) async throws -> Bool {
+    // Auto-save state before reloading config (skip during dry-run)
+    if !args.dryRun {
+        await autoSaveStateIfConfigured()
+    }
+    
     let result: Bool
     switch readConfig(forceConfigUrl: forceConfigUrl) {
         case .success(let (parsedConfig, url)):

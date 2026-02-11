@@ -72,6 +72,8 @@ extension CmdArgs {
                 command = SaveStateCommand(args: self as! SaveStateCmdArgs)
             case .split:
                 command = SplitCommand(args: self as! SplitCmdArgs)
+            case .subscribe:
+                die("subscribe is handled by CLI directly")
             case .summonWorkspace:
                 command = SummonWorkspaceCommand(args: self as! SummonWorkspaceCmdArgs)
             case .swap:

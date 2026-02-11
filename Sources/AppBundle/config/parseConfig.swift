@@ -113,7 +113,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "auto-reload-config": Parser(\.autoReloadConfig, parseBool),
     "automatically-unhide-macos-hidden-apps": Parser(\.automaticallyUnhideMacosHiddenApps, parseBool),
     "use-fast-focus": Parser(\.useFastFocus, parseBool),
-    "accordion-padding": Parser(\.accordionPadding, parseInt),
+    "accordion-padding": Parser(\.accordionPadding, parseDimensionValue),
     persistentWorkspacesKey: Parser(\.persistentWorkspaces, parsePersistentWorkspaces),
     "exec-on-workspace-change": Parser(\.execOnWorkspaceChange, parseArrayOfStrings),
     "ignore-focus-from": Parser(\.ignoreFocusFrom, parseIgnoreFocusFrom),
@@ -443,4 +443,18 @@ func expectedActualTypeError(expected: TOMLType, actual: TOMLType, _ backtrace: 
 
 func expectedActualTypeError(expected: [TOMLType], actual: TOMLType, _ backtrace: TomlBacktrace) -> TomlParseError {
     .semantic(backtrace, expectedActualTypeError(expected: expected, actual: actual))
+}
+
+func parseDimensionValue(_ raw: TOMLValueConvertible, _ backtrace: TomlBacktrace) -> ParsedToml<DimensionValue> {
+    if let intValue = raw.int {
+        return .success(.pixels(intValue))
+    } else if let strValue = raw.string {
+        if let dimensionValue = DimensionValue.parse(strValue) {
+            return .success(dimensionValue)
+        } else {
+            return .failure(.semantic(backtrace, "Invalid dimension value: '\(strValue)'. Expected integer or percentage (e.g., '30' or '5%')"))
+        }
+    } else {
+        return .failure(.semantic(backtrace, "Expected integer or string. But '\(raw.type)' is found"))
+    }
 }

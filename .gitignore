@@ -18,6 +18,8 @@
 
 # For whatever local files that developers might want to keep there (I personally keep a separate `generated-html` git worktree here)
 /.local
+# nix-shell generated tool symlinks
+/.nix-tools
 
 # XCode User settings
 xcuserdata/

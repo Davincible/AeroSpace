@@ -43,6 +43,14 @@ struct ResizeCommand: Command { // todo cover with tests
             }
 
             let isWidthDominant = size.width >= size.height
+
+            let dimensionForPercent: CGFloat = switch args.dimension.val {
+                case .width: monitorRect.width
+                case .height: monitorRect.height
+                case .smart: isWidthDominant ? monitorRect.width : monitorRect.height
+                case .smartOpposite: isWidthDominant ? monitorRect.height : monitorRect.width
+            }
+
             let diff: CGFloat = switch (args.units.val, args.dimension.val) {
                 case (.set(let unit), .width): CGFloat(unit) - size.width
                 case (.set(let unit), .height): CGFloat(unit) - size.height
@@ -50,6 +58,12 @@ struct ResizeCommand: Command { // todo cover with tests
                 case (.set(let unit), .smartOpposite): CGFloat(unit) - (isWidthDominant ? size.height : size.width)
                 case (.add(let unit), _): CGFloat(unit)
                 case (.subtract(let unit), _): -CGFloat(unit)
+                case (.setPercent(let pct), .width): dimensionForPercent * CGFloat(pct) / 100.0 - size.width
+                case (.setPercent(let pct), .height): dimensionForPercent * CGFloat(pct) / 100.0 - size.height
+                case (.setPercent(let pct), .smart): dimensionForPercent * CGFloat(pct) / 100.0 - (isWidthDominant ? size.width : size.height)
+                case (.setPercent(let pct), .smartOpposite): dimensionForPercent * CGFloat(pct) / 100.0 - (isWidthDominant ? size.height : size.width)
+                case (.addPercent(let pct), _): dimensionForPercent * CGFloat(pct) / 100.0
+                case (.subtractPercent(let pct), _): -dimensionForPercent * CGFloat(pct) / 100.0
             }
 
             let newTopLeftCorner: CGPoint
@@ -106,10 +120,24 @@ struct ResizeCommand: Command { // todo cover with tests
         guard let parent else { return io.err("resize command supports only `tiles` layout") }
         guard let orientation else { return false }
         guard let node else { return false }
+
+        // Get the monitor dimensions for percentage calculations
+        let monitor = node.nodeWorkspace?.workspaceMonitor ?? mainMonitor
+        let monitorDimension = orientation == .h ? monitor.visibleRect.width : monitor.visibleRect.height
+
         let diff: CGFloat = switch args.units.val {
             case .set(let unit): CGFloat(unit) - node.getWeight(orientation)
             case .add(let unit): CGFloat(unit)
             case .subtract(let unit): -CGFloat(unit)
+            case .setPercent(let percent): (
+                    monitorDimension * (CGFloat(percent) / 100.0) - node.getWeight(orientation)
+                )
+            case .addPercent(let percent): (
+                    monitorDimension * (CGFloat(percent) / 100.0)
+                )
+            case .subtractPercent(let percent): (
+                    -monitorDimension * (CGFloat(percent) / 100.0)
+                )
         }
 
         guard let childDiff = diff.div(parent.children.count - 1) else { return false }
